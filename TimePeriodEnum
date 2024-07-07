@@ -1,0 +1,182 @@
+```java
+package com.topkg.dto.qishu;
+
+import java.time.*;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.List;
+import java.util.TimeZone;
+
+/**
+ * Date: 2024/6/28
+ * Author: chenyuan
+ * E-mail: yuan_chen24@163.com
+ * Description:
+ * 时间周期，可用值：daily（每天）\|workday（周一到周五）\|weekend（周末）\|weekly（每周）\|monthly（每月）\|yearly（每年）
+ */
+public enum TimePeriodEnum {
+
+    daily("每天"),
+
+    workday("周一到周五"),
+
+    weekend("周末"),
+
+    weekly("每周"),
+
+    monthly("每月"),
+
+    yearly("每年"),;
+
+    private String desc;
+
+    TimePeriodEnum(String desc) {
+        this.desc = desc;
+    }
+
+    public String getDesc() {
+        return desc;
+    }
+
+    // 根据TimePeriod计算并返回时间分片
+    public List<List<Long>> timeSplit(List<Long> timeRange) {
+        if (timeRange == null || timeRange.size() < 2) {
+            throw new IllegalArgumentException("时间范围格式错误");
+        }
+
+        long startMillis = timeRange.get(0);
+        long endMillis = timeRange.get(timeRange.size() - 1);
+
+        ZonedDateTime startDateTime = Instant.ofEpochMilli(startMillis).atZone(ZoneId.of("Asia/Shanghai"));
+        ZonedDateTime endDateTime = Instant.ofEpochMilli(endMillis).atZone(ZoneId.of("Asia/Shanghai"));
+
+        List<List<Long>> result = new ArrayList<>();
+
+        switch (this) {
+            case daily:
+                splitByDaily(startDateTime, endDateTime, result);
+                break;
+            case workday:
+                splitByWorkday(startDateTime, endDateTime, result);
+                break;
+            case weekend:
+                splitByWeekend(startDateTime, endDateTime, result);
+                break;
+            case weekly:
+                splitByWeekly(startDateTime, endDateTime, result);
+                break;
+            case monthly:
+                splitByMonthly(startDateTime, endDateTime, result);
+                break;
+            case yearly:
+                splitByYearly(startDateTime, endDateTime, result);
+                break;
+            default:
+                throw new IllegalArgumentException("未知timePeriod: " + this);
+        }
+        return result;
+    }
+
+    private void splitByDaily(ZonedDateTime start, ZonedDateTime end, List<List<Long>> result) {
+        ZonedDateTime current = start.truncatedTo(ChronoUnit.DAYS);
+        while (current.isBefore(end)) {
+            ZonedDateTime next = current.plusDays(0).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+            if (!next.isAfter(end)) {
+                addToResultIfWithinRange(result, current, next, start, end);
+            }
+            current = current.plusDays(1);
+        }
+    }
+
+    private void splitByWorkday(ZonedDateTime start, ZonedDateTime end, List<List<Long>> result) {
+        ZonedDateTime current = start.truncatedTo(ChronoUnit.DAYS);
+        while (current.isBefore(end)) {
+            if (isWorkday(current)) {
+                ZonedDateTime next = current.plusDays(0).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+                if (!next.isAfter(end)) {
+                    addToResultIfWithinRange(result, current, next, start, end);
+                }
+            }
+            current = current.plusDays(1);
+        }
+    }
+
+    private void splitByWeekend(ZonedDateTime start, ZonedDateTime end, List<List<Long>> result) {
+        ZonedDateTime current = start.truncatedTo(ChronoUnit.DAYS);
+        while (current.isBefore(end)) {
+            if (isWeekend(current)) {
+                ZonedDateTime next = current.plusDays(0).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+                if (!next.isAfter(end)) {
+                    addToResultIfWithinRange(result, current, next, start, end);
+                }
+            }
+            current = current.plusDays(1);
+        }
+    }
+
+    private void splitByWeekly(ZonedDateTime start, ZonedDateTime end, List<List<Long>> result) {
+        ZonedDateTime current = start.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        ZonedDateTime next = current.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+        if (next.isBefore(start)) {
+            current = current.plusWeeks(1);
+            next = current.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+        }
+        while (current.isBefore(end)) {
+            if (!next.isAfter(end)) {
+                addToResultIfWithinRange(result, current, next, start, end);
+            }
+            current = current.plusWeeks(1);
+            next = current.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+        }
+    }
+
+    private void splitByMonthly(ZonedDateTime start, ZonedDateTime end, List<List<Long>> result) {
+        ZonedDateTime current = start.withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+        while (current.isBefore(end)) {
+            ZonedDateTime next = current.plusMonths(1).withDayOfMonth(1).minusNanos(1).withHour(23).withMinute(59).withSecond(59).withNano(999_999_999);
+            if (next.isBefore(current) || next.isAfter(end)) {
+                next = end;
+            }
+            addToResultIfWithinRange(result, current, next, start, end);
+            current = current.plusMonths(1).withDayOfMonth(1).truncatedTo(ChronoUnit.DAYS);
+        }
+    }
+
+    private void splitByYearly(ZonedDateTime start, ZonedDateTime end, List<List<Long>> result) {
+        ZonedDateTime current = start.withDayOfYear(1).truncatedTo(ChronoUnit.DAYS); // Ensure the start is the beginning of the year
+        while (current.isBefore(end)) {
+            ZonedDateTime next = current.plusYears(1).minusNanos(1); // Move to the end of the current year
+            if (next.isAfter(end)) {
+                break; // Stop if next exceeds the end
+            }
+            result.add(Arrays.asList(current.toInstant().toEpochMilli(), next.toInstant().toEpochMilli()));
+            current = next.plusNanos(1); // Move to the beginning of the next year
+        }
+    }
+
+    private void addToResultIfWithinRange(List<List<Long>> result, ZonedDateTime currentStart, ZonedDateTime currentEnd, ZonedDateTime start, ZonedDateTime end) {
+        long startMillis = currentStart.toInstant().toEpochMilli();
+        long endMillis = currentEnd.toInstant().toEpochMilli();
+        long rangeStartMillis = start.toInstant().toEpochMilli();
+        long rangeEndMillis = end.toInstant().toEpochMilli();
+
+        if (startMillis >= rangeStartMillis && endMillis <= rangeEndMillis) {
+            result.add(Arrays.asList(startMillis, endMillis));
+        }
+    }
+
+
+    private boolean isWorkday(ZonedDateTime dateTime) {
+        DayOfWeek day = dateTime.getDayOfWeek();
+        return day != DayOfWeek.SATURDAY && day != DayOfWeek.SUNDAY;
+    }
+
+    private boolean isWeekend(ZonedDateTime dateTime) {
+        DayOfWeek day = dateTime.getDayOfWeek();
+        return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
+    }
+}
+```
